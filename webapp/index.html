@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <title>SuperDry</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+        <link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.3/css/bootstrap.min.css" crossorigin="anonymous">
+        <script src="//code.jquery.com/jquery-3.2.1.min.js" crossorigin="anonymous"></script>
+        <script type="text/javascript">
+            var items = [], allItems = [];
+            var page = 0;
+            var itemPerPage = 20;
+            var sortingFunction = sortByName;
+
+            $(function(){
+                init();
+            });
+            
+            function init(){
+                page = 0;
+                items = [];
+                allItems = [];
+                sortingFunction = sortByName;
+
+                $.getJSON("items-final.json", function(data){
+                    allItems = items = data;
+                    
+                    // list up all categories
+                    var sorted_cats = [];
+                    {
+                        var cats = {};
+                        for (var i = 0; i < items.length; i++){
+                            const this_cat = getCategoryFromItem(items[i]);
+                            if (cats.hasOwnProperty(this_cat))
+                                continue;
+                            cats[this_cat] = true;
+                        }
+                        
+                        for (var cat in cats)
+                            sorted_cats.push(cat);
+                            
+                        sorted_cats.sort((c1, c2) => c1.localeCompare(c2));
+                    }
+                    
+                    for (var i = 0; i < sorted_cats.length; i++){
+                        const cat = sorted_cats[i];
+                        $("#category-dropdown").append(
+                            "<a class='dropdown-item' href='#top' onclick='onSelectCategory(\"" + cat + "\")'>" + cat + "</a>"
+                        );
+                    }
+                    
+                    doFilter();
+                    sortingFunction();
+                    render();
+                });
+            }
+            
+            function doFilter(){
+                const filter = $("#filter-textbox").val().trim();
+                if (filter.length > 0){
+                    items = items.filter(i=>{
+                        return i.name.toLowerCase().indexOf(filter.toLowerCase()) >= 0
+                            || i.id.toLowerCase().indexOf(filter.toLowerCase()) >= 0
+                            || i.color.toLowerCase().indexOf(filter.toLowerCase()) >= 0;
+                    });
+                }
+            }
+            
+            function render(){
+                var container = $("#item-container");
+                container.children().remove();
+
+                if (items.length > 0){
+                    const max_page = Math.ceil(items.length / itemPerPage) - 1;
+                    if (page > max_page)
+                        page = max_page;
+                    
+                    for (var i = page * itemPerPage; i < Math.min((page + 1) * itemPerPage, items.length); i++){
+                        var itm = items[i];
+    
+                        var price_html = "$" + itm["checkout-price"];
+                        if (itm["checkout-price"] != itm["price"])
+                            price_html += " <small><strike>$" + itm["price"] + "</strike> -" + Math.round((itm["price"] - itm["checkout-price"]) / itm["price"] * 100) + "%</small>"
+    
+                        container.append(""
+                            + "<div class='col-xs-12 col-sm-6 col-lg-4 col-xl-3'>"
+                            +       "<div class='card'>"
+                            +           "<a href='" + itm["url"] + "' target='_blank'>"
+                            +               "<img class='card-img-top' src='" + itm["img"] + "' alt='view on superdry.com'>"
+                            +           "</a>"
+                            +           "<div class='card-body'>"
+                            +               "<h6 class='card-title'>"
+                            +                   itm["name"]
+                            +               "</h6>"
+                            +           "</div>"
+                            +           "<ul class='list-group list-group-flush'>"
+                            +               "<li class='list-group-item'><strong>" + price_html + "</strong></li>"
+                            +               "<li class='list-group-item'><small>" + itm["id"] + "</small></li>"
+                            +               "<li class='list-group-item'><small>" + itm["color"] + "</small></li>"
+                            +               "<li class='list-group-item'><small>" + itm["sizes"].map(s=>s.indexOf(',') < 0 ? s : s.substr(0, s.indexOf(','))).join(" - ") + "</small></li>"
+                            +           "</ul>"
+                            + "     </div>"
+                            + "     <br/>"
+                            + "</div>"
+                        );
+                    }
+                }
+                else
+                    container.append("<div class='col-xs-12'><h5 align='center'>Nothing</h5></div>");
+                
+                updatePagination();
+            }
+            
+            function updatePagination(){
+                var html = ""
+                
+                if (items.length > 0){
+                    var make_one = (html, enabled, handler_func_name)=>{
+                        return "<li class='page-item" + (!enabled ? " disabled" : "") + "'>"
+                            + "<a class='page-link' href='#top' onclick='" + handler_func_name + "()'>" + html + "</a>"
+                            + "</li>";
+                    };
+                    
+                    var last_page = Math.ceil(items.length / itemPerPage) - 1;
+                    
+                    html += "<nav>";
+                    html +=     "<ul class='pagination justify-content-center'>";
+                    html +=         make_one("<span aria-hidden='true'>&laquo;</span>", page > 0 && items.length > 0, "goToFirstPage");
+                    html +=         make_one("<span aria-hidden='true'>&lt;</span>", page > 0 && items.length > 0, "goToPreviousPage");
+                    html +=         "<li class='page-item active'><span class='page-link'>" + (page + 1) + " of " + (last_page + 1)  + "</span></li>";
+                    html +=         make_one("<span aria-hidden='true'>&gt;</span>", page < last_page && items.length > 0, "goToNextPage");
+                    html +=         make_one("<span aria-hidden='true'>&raquo;</span>", page < last_page && items.length > 0, "goToLastPage");
+                    html +=     "</ul>";
+                    html += "</nav>";
+                }
+                
+                $("#pagination-container-top").html(html);
+                $("#pagination-container-bottom").html(html);
+            }
+            
+            function goToFirstPage(){
+                page = 0;
+                render();
+            }
+            
+            function goToLastPage(){
+                page = Math.ceil(items.length / itemPerPage) - 1;
+                render();
+            }
+            
+            function goToPreviousPage(){
+                page--;
+                render();
+            }
+            
+            function goToNextPage(){
+                page++;
+                render();
+            }
+            
+            function onClickSortByName(){
+                sortingFunction = sortByName;
+                sortingFunction();
+                render();
+                $("#dropdownSort").text("Name");
+            }
+
+            function sortByName(){
+                items.sort((i1, i2) => i1.name.localeCompare(i2.name));
+            }
+            
+            function onClickSortByPrice(){
+                sortingFunction = sortByPrice;
+                sortingFunction();
+                render();
+                $("#dropdownSort").text("Original price");
+            }
+            
+            function sortByPrice(){
+                items.sort((i1, i2) => i1["price"] - i2["price"]);
+            }
+            
+            function onClickSortByCheckoutPrice(){
+                sortingFunction = sortByCheckoutPrice;
+                sortingFunction();
+                render();
+                $("#dropdownSort").text("Checkout price");
+            }
+                
+            function sortByCheckoutPrice(){
+                items.sort((i1, i2) => i1["checkout-price"] - i2["checkout-price"]);
+            }
+            
+            function onClickSortByDiscount(){
+                sortingFunction = sortByDiscount;
+                sortingFunction();
+                render();
+                $("#dropdownSort").text("Discount");
+            }
+            
+            function sortByDiscount(){
+                items.sort((i1, i2) => {
+                    var d1 = (i1["price"] - i1["checkout-price"]) / i1["price"];
+                    var d2 = (i2["price"] - i2["checkout-price"]) / i2["price"];
+                    return d2 - d1;
+                });
+            }
+            
+            function onChangeFilter(e){
+                if (e.which == 13){
+                    page = 0;
+                    items = allItems;
+                    doFilter();
+                    sortingFunction();
+                    render();
+                    $("#filter-textbox").blur();
+                    return false;
+                }
+                return true;
+            }
+            
+            function onSelectCategory(category){
+                if (category == null)
+                    items = allItems;
+                else
+                    items = allItems.filter(i => category == null || category == getCategoryFromItem(i));
+                page = 0;
+                doFilter();
+                sortingFunction();
+                render();
+                $("#dropdownCategory").text(category == null ? "All" : category);
+            }
+
+            function getCategoryFromItem(item){
+                if (!item.category){
+                    // eg. url=https://www.superdry.com/us/womens/sale-tops/details/65890/studio-wrap-shrug--grey
+                    var temp = item.url;
+                    if (!temp)
+                        item.category = "unknown";
+                    else {
+                        temp = temp.substr(temp.indexOf("//") + 2);    // remove protocol
+                        temp = temp.substr(temp.indexOf("/") + 1); // remove hostname
+                        var tokens = temp.split('/');
+                        if (tokens[0] != "mens" && tokens[0] != "womens"){
+                            // country exists, skip
+                            tokens.splice(0, 1);
+                        }
+                        // category=concat of first two tokens
+                        item.category = tokens[0] + " / " + tokens[1];
+                    }
+                }
+                return item.category;
+            }
+        </script>
+    </head>
+    <body>
+        <div class="container-fluid">
+            <small>
+                <div class="row">
+                    <div class="col-5">
+                        <div class="dropdown">
+                            <button class="btn btn-sm dropdown-toggle" type="button" id="dropdownCategory" data-toggle="dropdown">
+                                All
+                            </button>
+                            <div class="dropdown-menu" id="category-dropdown">
+                                <h6 class="dropdown-header">Select category</h6>
+                                <a class="dropdown-item" href="#none" onclick="onSelectCategory(null)">All</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-3">
+                        <div class="dropdown">
+                            <button class="btn btn-sm dropdown-toggle" type="button" id="dropdownSort" data-toggle="dropdown">
+                                Name
+                            </button>
+                            <div class="dropdown-menu">
+                                <h6 class="dropdown-header">Sort by</h6>
+                                <a class="dropdown-item" href="#none" onclick="onClickSortByName()">Name</a>
+                                <a class="dropdown-item" href="#none" onclick="onClickSortByPrice()">Original price</a>
+                                <a class="dropdown-item" href="#none" onclick="onClickSortByCheckoutPrice()">Checkout price</a>
+                                <a class="dropdown-item" href="#none" onclick="onClickSortByDiscount()">Discount</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <form onsubmit="return false">
+                            <input type="text" class="form-control form-control-sm" placeholder="Search" id="filter-textbox" onkeypress="return onChangeFilter(event)">
+                        </form>
+                    </div>
+                </div>
+            </small>
+
+            <hr id="top"/>
+
+            <div id="pagination-container-top"></div>
+
+            <div id="item-container" class="row"></div>
+            
+            <div id="pagination-container-bottom"></div>
+        </div>
+        
+        <script src="//cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" crossorigin="anonymous"></script>
+        <script src="//maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.3/js/bootstrap.min.js" crossorigin="anonymous"></script>
+    </body>
+</html>
