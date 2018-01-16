@@ -15,7 +15,7 @@ This application automates the above and present the discounted items in a simpl
 
 ## Idea of this application
 
-## Stage 1
+### Stage 1
 1. Scrape all discounted category on superdry.com (eg. Mens Sales/Hoodies) and get urls of discounted items
 1. for each item, automate the purchase process and record the following information:
     - item name
@@ -26,7 +26,7 @@ This application automates the above and present the discounted items in a simpl
     - listed price
     - final checkout price
 1. store the information of all items in items.json
-## Stage 2
+### Stage 2
 1. run a simple web server to host a web app
 1. the web app reads items.json generated in Stage 1 and present the items in grid layout
 
