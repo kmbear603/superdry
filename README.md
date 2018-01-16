@@ -60,6 +60,7 @@ This application automates the above and present the discounted items in a simpl
 1. execute SuperDry.exe on a Windows machine to get items.json
 1. run web server (either locally or on cloud) by the command
     ```javascript
+    npm install
     node server.js
     ```
 1. open a web browser and navigate to the website. Note that TCP port 8080 is used by default
