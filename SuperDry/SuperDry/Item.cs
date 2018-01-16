@@ -242,7 +242,8 @@ namespace SuperDry
                                     };
 
                                     // wait until yes button appears
-                                    while (true)
+                                    DateTime start_wait = DateTime.Now;
+                                    while (DateTime.Now < start_wait + TimeSpan.FromMinutes(1))
                                     {
                                         try
                                         {
@@ -253,13 +254,15 @@ namespace SuperDry
                                         catch { }
                                         Task.Delay(100).Wait();
                                     }
+                                    if (get_yes_button() == null)
+                                        throw new Exception("yes button doesnt appear");
 
                                     get_yes_button().ClickWithoutScrollAsync().Wait();
 
                                     //Task.Delay(1000).Wait();
 
                                     // wait until yes button disappears
-                                    DateTime start_wait = DateTime.Now;
+                                    start_wait = DateTime.Now;
                                     while (DateTime.Now < start_wait + TimeSpan.FromMinutes(1))
                                     {
                                         try

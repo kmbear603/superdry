@@ -31,6 +31,10 @@ This application automates the above and present the discounted items in a simpl
 1. the web app reads items.json generated in Stage 1 and present the items in grid layout
 
 ## Module structure
+- SuperDry.exe
+    - scrape all sales items from superdry.com website and save to items.json
+- web app
+    - presents items.json to end user in the form of single page web app
 
 ## Dependencies
 ### Scraper
@@ -68,6 +72,7 @@ This application automates the above and present the discounted items in a simpl
 - checkout multiple items at once for speed up
 - dynamic number of concurrent workers (or use ThreadPool)
 - schedule to run every day at 12:00am
+- upload items.json automatically after scraping task
 ### Web app
 - use HTML5 history API for client side routing
 

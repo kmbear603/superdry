@@ -15,7 +15,7 @@ namespace SuperDry
         /// <summary>
         /// number of simultaneous working threads
         /// </summary>
-        private const int CONCURRENT_WORKER = 2;
+        private const int CONCURRENT_WORKER = 4;
 
         /// <summary>
         /// output json file name
