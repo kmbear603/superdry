@@ -63,11 +63,14 @@ namespace SuperDry
 #endif // future
                     }
 
+                    if (item_urls.Count == 0)
+                        throw new Exception("force retry");
+
                     return item_urls.ToArray();
                 }
                 catch (Exception ex)
                 {
-
+                    System.Threading.Thread.Sleep(5000);
                 }
             }
 

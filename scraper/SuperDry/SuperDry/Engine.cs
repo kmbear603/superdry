@@ -167,7 +167,13 @@ namespace SuperDry
         private void FinishProcessingScraper(IScrapable worker)
         {
             lock (_Scrapers)
+            {
+                int before = _WorkingScrapers.Count;
                 _WorkingScrapers.Remove(worker);
+                int after = _WorkingScrapers.Count;
+                if (before == after)
+                    throw new Exception();
+            }
         }
 
         /// <summary>
@@ -183,6 +189,8 @@ namespace SuperDry
             }
         }
 
+        private int _CreatedBrowserCount = 0;
+
         /// <summary>
         /// get idle browser
         /// </summary>
@@ -193,7 +201,17 @@ namespace SuperDry
             lock (_Browsers)
             {
                 if (_Browsers.Count == 0)
-                    return null;
+                {
+                    if (_CreatedBrowserCount < CONCURRENT_WORKER)
+                    {
+                        _CreatedBrowserCount++;
+                        var new_browser = new BrowserSession.ChromeBrowserSession();
+                        new_browser.StartAsync(new BrowserSession.StartOption() { Headless = true }).Wait();
+                        return new_browser;
+                    }
+                    else
+                        return null;
+                }
                 browser = _Browsers[_RandomGenerator.Next(_Browsers.Count)];
                 _Browsers.Remove(browser);
             }
@@ -221,7 +239,7 @@ namespace SuperDry
         {
             get
             {
-                lock (_WorkingScrapers)
+                lock (_Scrapers)
                 {
                     return _WorkingScrapers.Count;
                 }
@@ -254,37 +272,41 @@ namespace SuperDry
             }
         }
 
-        private void WorkerFunc()
-        {
-            var update_status = _StatusCallback;
 
+        private bool GetOneAndProcess(out bool exit)
+        {
             // get browser
             var browser = GetIdleBrowser();
 
-            while (true)
+            if (browser == null)
             {
-                bool exit;
+                // no browser to use, skip
+                exit = false;
+                return false;
+            }
+
+            try
+            {
                 var worker = GetUnprocessedScraper(out exit);
 
                 if (exit)   // need to exit
-                    break;
+                    return false;
                 else if (worker == null)
                 {
                     // no worker and not exit yet, try again after 5 seconds
-                    Thread.Sleep(5000);
-                    continue;
+                    return false;
                 }
-
-                // run the scraper job
-                worker.Scrape(browser, update_status);
 
                 try
                 {
+                    // run the scraper job
+                    worker.Scrape(browser, _StatusCallback);
+
                     if (worker is Category)
                     {
                         var category = worker as Category;
                         if (category.Items == null) // no item found in this category
-                            continue;
+                            return true;
 
                         int added_count = 0;
                         foreach (var item in category.Items)
@@ -304,12 +326,12 @@ namespace SuperDry
                         var item = worker as Item;
 
                         if (!item.Success)  // TODO: handle failure
-                            continue;
+                            return true;
 
                         lock (_Items)
                         {
                             if (_Items.ContainsKey(item.Id))    // already added to result
-                                continue;
+                                return true;
                             _Items.Add(item.Id, item);
                         }
                     }
@@ -321,8 +343,25 @@ namespace SuperDry
                     FinishProcessingScraper(worker);
                 }
             }
+            finally
+            {
+                FinishUsingBrowser(browser);
+            }
 
-            FinishUsingBrowser(browser);
+            return true;
+        }
+
+        private void WorkerFunc()
+        {
+            while (true)
+            {
+                bool exit;
+                bool worked = GetOneAndProcess(out exit);
+                if (exit)
+                    break;
+                else if (!worked)
+                    Thread.Sleep(1000);
+            }
         }
 
         /// <summary>
@@ -341,8 +380,8 @@ namespace SuperDry
 
             _WorkingScrapers = new List<IScrapable>();
 
-            _WorkerThreads = new List<Thread>();
             _Browsers = new List<BrowserSession.BrowserSession>();
+            _WorkerThreads = new List<Thread>();
             for (int i = 0; i < CONCURRENT_WORKER; i++)
             {
                 var browser = new BrowserSession.ChromeBrowserSession();
@@ -436,6 +475,7 @@ namespace SuperDry
                 DateTime now = DateTime.Now;
                 int finished = FinishedItemCount;
                 int remaining = UnprocessedScraperCount;
+                int working = WorkingScraperCount;
 
                 if (finished > 0)
                 {
@@ -445,7 +485,7 @@ namespace SuperDry
                     estimate = estimate_timespan.Hours + "h" + estimate_timespan.Minutes + "m";
                 }
 
-                _StatusCallback("completed: " + finished + ", remaining: " + UnprocessedScraperCount + ", estimate=" + estimate);
+                _StatusCallback("completed: " + finished + ", working: " + working + ", remaining: " + UnprocessedScraperCount + ", estimate=" + estimate);
 
                 if (DateTime.Now >= last_flush + TimeSpan.FromMinutes(5))
                 {
