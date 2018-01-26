@@ -6,11 +6,11 @@ using System.Threading.Tasks;
 
 namespace SuperDry
 {
-    class Category : IScrapable
+    class Category : Scrapable
     {
         public Category(string category_url)
+            : base(category_url)
         {
-            this.Url = category_url;
         }
 
         /// <summary>
@@ -25,8 +25,15 @@ namespace SuperDry
             {
                 try
                 {
+                    // stop current loading on browser
+                    browser.Stop();
+
                     // go to the category page
+#if kill
                     browser.GoTo(this.Url);
+#else // kill
+                    NagivateBrowserToUrlWithTimeout(browser, this.Url, TimeSpan.FromMinutes(1));
+#endif // kill
 
                     var item_urls = new HashSet<string>();
 
@@ -78,7 +85,7 @@ namespace SuperDry
             return null;
         }
 
-        public void Scrape(BrowserSession.BrowserSession browser, UpdateStatusDelegate update_status)
+        protected override void ScrapeCore(BrowserSession.BrowserSession browser, UpdateStatusDelegate update_status)
         {
             Items = null;
 
@@ -98,11 +105,6 @@ namespace SuperDry
 
             this.Items = items.Values.ToList();
             update_status(this.Url + ": " + this.Items.Count + " items");
-        }
-
-        public string Url
-        {
-            get; private set;
         }
 
         public IReadOnlyList<Item> Items

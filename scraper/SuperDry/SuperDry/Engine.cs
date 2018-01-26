@@ -1,4 +1,5 @@
-﻿using System;
+﻿//#define NO_BATCH_SCRAPE
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -15,7 +16,18 @@ namespace SuperDry
         /// <summary>
         /// number of simultaneous working threads
         /// </summary>
+#if DEBUGxx
+        private const int CONCURRENT_WORKER = 1;
+#else // DEBUG
         private const int CONCURRENT_WORKER = 4;
+#endif // DEBUG
+
+#if !NO_BATCH_SCRAPE
+        /// <summary>
+        /// number of items to scrape in one checkout
+        /// </summary>
+        private const int BATCH_SIZE = 10;
+#endif // !NO_BATCH_SCRAPE
 
         /// <summary>
         /// output json file name
@@ -25,12 +37,17 @@ namespace SuperDry
         /// <summary>
         /// unprocessed scrapers
         /// </summary>
-        private List<IScrapable> _Scrapers = null;
+        private List<Scrapable> _Scrapers = null;
 
         /// <summary>
         /// currently working scrapers
         /// </summary>
-        private List<IScrapable> _WorkingScrapers = null;
+        private List<Scrapable> _WorkingScrapers = null;
+
+        /// <summary>
+        /// finished scrapers
+        /// </summary>
+        private List<Scrapable> _FinishedScrapers = null;
 
 #if kill
         /// <summary>
@@ -123,7 +140,7 @@ namespace SuperDry
         /// </summary>
         /// <param name="exit">true if no more scraper will be processed</param>
         /// <returns>next unprocessed scraper</returns>
-        private IScrapable GetUnprocessedScraper(out bool exit)
+        private Scrapable GetUnprocessedScraper(out bool exit)
         {
             lock (_Scrapers)
             {
@@ -164,7 +181,7 @@ namespace SuperDry
         /// remove scraper from working list
         /// </summary>
         /// <param name="worker"></param>
-        private void FinishProcessingScraper(IScrapable worker)
+        private void FinishProcessingScraper(Scrapable worker)
         {
             lock (_Scrapers)
             {
@@ -173,6 +190,7 @@ namespace SuperDry
                 int after = _WorkingScrapers.Count;
                 if (before == after)
                     throw new Exception();
+                _FinishedScrapers.Add(worker);
             }
         }
 
@@ -206,7 +224,30 @@ namespace SuperDry
                     {
                         _CreatedBrowserCount++;
                         var new_browser = new BrowserSession.ChromeBrowserSession();
-                        new_browser.StartAsync(new BrowserSession.StartOption() { Headless = true }).Wait();
+#if DEBUGxx
+                        bool headless = false;
+#else // DEBUG
+                        bool headless = false;
+#endif // DEBUG
+                        new_browser.StartAsync(new BrowserSession.StartOption()
+                        {
+                            Headless = headless,
+                            LoadImage = false,
+                            LoadFont = false,
+//#if DEBUGxx
+                            WildcardOfUrlToBlock = new string[]
+                            {
+                                //"https://*.attraqt.com/*",
+                                "https://*.google-analytics.com/*",
+                                "https://*.googleadservices.com/*",
+                                "https://*.doubleclick.net/*",
+                                "https://*.peerius.com/*",
+                                "https://*.facebook.com/*",
+                            }
+//#endif // DEBUG
+                        }).Wait();
+
+                        new_browser.SetWindowSize(new System.Drawing.Size(800, 900));
                         return new_browser;
                     }
                     else
@@ -242,6 +283,20 @@ namespace SuperDry
                 lock (_Scrapers)
                 {
                     return _WorkingScrapers.Count;
+                }
+            }
+        }
+
+        /// <summary>
+        /// number of processed scraper
+        /// </summary>
+        private int FinishedScraperCount
+        {
+            get
+            {
+                lock (_Scrapers)
+                {
+                    return _FinishedScrapers.Count;
                 }
             }
         }
@@ -297,6 +352,28 @@ namespace SuperDry
                     return false;
                 }
 
+                UpdateWorkerStatus(Thread.CurrentThread.ManagedThreadId, worker.GetType().ToString() + "," + worker.Url);
+
+                Func<Item, bool> handle_item = item =>
+                {
+                    if ((item.Success.HasValue && !item.Success.Value)
+                        || (item.SoldOut.HasValue && item.SoldOut.Value))   // TODO: handle failure
+                        return true;
+#if DEBUG
+                    if (!item.Success.HasValue && !item.SoldOut.HasValue)
+                        throw new Exception("both Success and SoldOut = null");
+#endif // DEBUG
+
+                    lock (_Items)
+                    {
+                        if (_Items.ContainsKey(item.Id))    // already added to result
+                            return true;
+                        _Items.Add(item.Id, item);
+                    }
+
+                    return true;
+                };
+
                 try
                 {
                     // run the scraper job
@@ -308,11 +385,25 @@ namespace SuperDry
                         if (category.Items == null) // no item found in this category
                             return true;
 
+#if !NO_BATCH_SCRAPE
+                        var batch = new List<Item>();
+#endif // !NO_BATCH_SCRAPE
+
                         int added_count = 0;
                         foreach (var item in category.Items)
                         {
+#if !NO_BATCH_SCRAPE
+                            batch.Add(item);
+                            if (batch.Count == BATCH_SIZE)
+                            {
+                                lock (_Scrapers)
+                                    _Scrapers.Add(new ItemGroup(batch.ToArray()));    // queue the item
+                                batch.Clear();
+                            }
+#else // !NO_BATCH_SCRAPE
                             lock (_Scrapers)
                                 _Scrapers.Add(item);    // queue the item
+#endif // !NO_BATCH_SCRAPE
 
                             added_count++;
 #if DEBUGxx
@@ -320,21 +411,28 @@ namespace SuperDry
                             break;
 #endif // DEBUG
                         }
+
+#if !NO_BATCH_SCRAPE
+                        if (batch.Count > 0)
+                        {
+                            lock (_Scrapers)
+                                _Scrapers.Add(new ItemGroup(batch.ToArray()));    // queue the item
+                            batch.Clear();
+                        }
+#endif // !NO_BATCH_SCRAPE
                     }
                     else if (worker is Item)
                     {
                         var item = worker as Item;
-
-                        if (!item.Success)  // TODO: handle failure
-                            return true;
-
-                        lock (_Items)
-                        {
-                            if (_Items.ContainsKey(item.Id))    // already added to result
-                                return true;
-                            _Items.Add(item.Id, item);
-                        }
+                        handle_item(item);
                     }
+#if !NO_BATCH_SCRAPE
+                    else if (worker is ItemGroup)
+                    {
+                        foreach (var item in ((ItemGroup)worker).Items)
+                            handle_item(item);
+                    }
+#endif // !NO_BATCH_SCRAPE
                     else
                         throw new NotImplementedException();
                 }
@@ -351,10 +449,61 @@ namespace SuperDry
             return true;
         }
 
+        private class WorkerStatus
+        {
+            public DateTime Time = DateTime.Now;
+            public string Status = "";
+            public int ThreadId = 0;
+        }
+        private static List<WorkerStatus> _WorkerStatus = new List<WorkerStatus>();
+        private static void UpdateWorkerStatus(int thread_id, string status)
+        {
+            lock (_WorkerStatus)
+            {
+                {
+                    var s = _WorkerStatus.Find(ss => ss.ThreadId == thread_id);
+                    if (s == null)
+                    {
+                        s = new WorkerStatus()
+                        {
+                            ThreadId = thread_id
+                        };
+                        _WorkerStatus.Add(s);
+                    }
+                    s.Time = DateTime.Now;
+                    s.Status = status;
+                }
+            }
+        }
+
+        private static void WriteWorkerStatus()
+        { 
+            lock (_WorkerStatus)
+            { 
+                for (int i = 0; i < 5; i++)
+                {
+                    try
+                    {
+                        using (var sw = new StreamWriter("worker.txt"))
+                        {
+                            foreach (var s in _WorkerStatus)
+                                sw.WriteLine(s.ThreadId + "," + s.Time.ToString("HH:mm:ss.fff") + "," + (DateTime.Now - s.Time).TotalSeconds.ToString("f0") + "s" + "," + s.Status);
+                        }
+                        return;
+                    }
+                    catch { }
+                }
+            }
+        }
+
         private void WorkerFunc()
         {
+            UpdateWorkerStatus(Thread.CurrentThread.ManagedThreadId, "start");
+
             while (true)
             {
+                UpdateWorkerStatus(Thread.CurrentThread.ManagedThreadId, "loop");
+
                 bool exit;
                 bool worked = GetOneAndProcess(out exit);
                 if (exit)
@@ -362,6 +511,8 @@ namespace SuperDry
                 else if (!worked)
                     Thread.Sleep(1000);
             }
+
+            UpdateWorkerStatus(Thread.CurrentThread.ManagedThreadId, "end");
         }
 
         /// <summary>
@@ -374,22 +525,22 @@ namespace SuperDry
             _Items = new Dictionary<string, Item>();
 
             // create Category worker from category urls and add to unprocessed list
-            _Scrapers = new List<IScrapable>();
+            _Scrapers = new List<Scrapable>();
             foreach (var category_url in URL.CategoryUrls)
+            {
                 _Scrapers.Add(new Category(category_url));
+#if DEBUGxx
+                break;
+#endif // DEBUG
+            }
 
-            _WorkingScrapers = new List<IScrapable>();
+            _WorkingScrapers = new List<Scrapable>();
+            _FinishedScrapers = new List<Scrapable>();
 
             _Browsers = new List<BrowserSession.BrowserSession>();
             _WorkerThreads = new List<Thread>();
             for (int i = 0; i < CONCURRENT_WORKER; i++)
-            {
-                var browser = new BrowserSession.ChromeBrowserSession();
-                browser.StartAsync(new BrowserSession.StartOption() { Headless = true }).Wait();
-                _Browsers.Add(browser);
-
                 _WorkerThreads.Add(new Thread(new ThreadStart(WorkerFunc)));
-            }
 
 #if kill
             _OutputStream = new StreamWriter(OUTPUT_FILENAME);
@@ -416,6 +567,7 @@ namespace SuperDry
             _OutputStream = null;
 #endif // kill
 
+            _FinishedScrapers = null;
             _WorkerThreads = null;
             _Browsers = null;
             _WorkingScrapers = null;
@@ -471,9 +623,11 @@ namespace SuperDry
                 if (all_exited)
                     break;
 
+                string elapse_per_worker = "N/A";
                 string estimate = "N/A";
                 DateTime now = DateTime.Now;
-                int finished = FinishedItemCount;
+                int finished_items = FinishedItemCount;
+                int finished = FinishedScraperCount;
                 int remaining = UnprocessedScraperCount;
                 int working = WorkingScraperCount;
 
@@ -482,10 +636,14 @@ namespace SuperDry
                     int seconds_per_worker = (int)Math.Round((now - start_time).TotalSeconds / finished);
                     int seconds_remaining = seconds_per_worker * remaining;
                     TimeSpan estimate_timespan = TimeSpan.FromSeconds(seconds_remaining);
-                    estimate = estimate_timespan.Hours + "h" + estimate_timespan.Minutes + "m";
+                    estimate = estimate_timespan.Hours + "h" + estimate_timespan.Minutes + "m" + estimate_timespan.Seconds + "s";
+                    elapse_per_worker = seconds_per_worker + "s";
                 }
 
-                _StatusCallback("completed: " + finished + ", working: " + working + ", remaining: " + UnprocessedScraperCount + ", estimate=" + estimate);
+                _StatusCallback("completed items: " + finished_items + ", completed jobs: " + finished + ", in-progress jobs: " + working + ", remaining jobs: " + UnprocessedScraperCount + ", time for each job: " + elapse_per_worker + ", estimate: " + estimate);
+
+                WriteWorkerStatus();
+                _StatusCallback("updated worker.txt");
 
                 if (DateTime.Now >= last_flush + TimeSpan.FromMinutes(5))
                 {
@@ -496,6 +654,10 @@ namespace SuperDry
 
                 Thread.Sleep(15 * 1000);
             }
+
+            DateTime end_time = DateTime.Now;
+            TimeSpan elapse = end_time - start_time;
+            _StatusCallback("done! elapse=" + elapse.Hours.ToString() + "h" + elapse.Minutes.ToString() + "m" + elapse.Seconds.ToString() + "s");
         }
 
         /// <summary>
