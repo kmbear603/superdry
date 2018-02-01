@@ -55,6 +55,10 @@
             }
             
             function doFilter(){
+                const now = new Date().getTime();
+                const new_only = $("#new-item-checkbox").is(":checked");
+                items = items.filter(i=>!new_only || (i.hasOwnProperty("time") && now <= i["time"] + 24 * 60 * 60 * 1000));
+                
                 const filter = $("#filter-textbox").val().trim();
                 if (filter.length > 0){
                     items = items.filter(i=>{
@@ -176,7 +180,11 @@
             }
             
             function sortByPrice(){
-                items.sort((i1, i2) => i1["price"] - i2["price"]);
+                items.sort((i1, i2) => {
+                    if (i1["price"] - i2["price"] != 0)
+                        return i1["price"] - i2["price"];
+                    return i1.name.localeCompare(i2.name);
+                });
             }
             
             function onClickSortByCheckoutPrice(){
@@ -187,7 +195,11 @@
             }
                 
             function sortByCheckoutPrice(){
-                items.sort((i1, i2) => i1["checkout-price"] - i2["checkout-price"]);
+                items.sort((i1, i2) => {
+                    if (i1["checkout-price"] - i2["checkout-price"] != 0)
+                        return i1["checkout-price"] - i2["checkout-price"];
+                    return i1.name.localeCompare(i2.name);
+                });
             }
             
             function onClickSortByDiscount(){
@@ -201,7 +213,9 @@
                 items.sort((i1, i2) => {
                     var d1 = (i1["price"] - i1["checkout-price"]) / i1["price"];
                     var d2 = (i2["price"] - i2["checkout-price"]) / i2["price"];
-                    return d2 - d1;
+                    if (d2 - d1 != 0)
+                        return d2 - d1;
+                    return i1.name.localeCompare(i2.name);
                 });
             }
             
@@ -250,13 +264,21 @@
                 }
                 return item.category;
             }
+            
+            function onNewItemOnlyCheckChanged(ev){
+                page = 0;
+                items = allItems;
+                doFilter();
+                sortingFunction();
+                render();
+            }
         </script>
     </head>
     <body>
         <div class="container-fluid">
             <small>
                 <div class="row">
-                    <div class="col-5">
+                    <div class="col-4">
                         <div class="dropdown">
                             <button class="btn btn-sm dropdown-toggle" type="button" id="dropdownCategory" data-toggle="dropdown">
                                 All
@@ -267,7 +289,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="col-3">
+                    <div class="col-2">
                         <div class="dropdown">
                             <button class="btn btn-sm dropdown-toggle" type="button" id="dropdownSort" data-toggle="dropdown">
                                 Name
@@ -281,7 +303,13 @@
                             </div>
                         </div>
                     </div>
-                    <div class="col-4">
+                    <div class="col-3">
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="new-item-checkbox" onchange="return onNewItemOnlyCheckChanged(event)">
+                            <label class="form-check-label" for="new-item-checkbox">New items only</label>
+                        </div>
+                    </div>
+                    <div class="col-3">
                         <form onsubmit="return false">
                             <input type="text" class="form-control form-control-sm" placeholder="Search" id="filter-textbox" onkeypress="return onChangeFilter(event)">
                         </form>

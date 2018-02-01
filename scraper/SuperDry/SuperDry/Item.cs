@@ -16,11 +16,37 @@ namespace SuperDry
         public float CheckoutPrice;
         public string Color;
         public string[] Sizes;
+        public DateTime TimeUTC;
 
         public Item(string item_url)
             : base(item_url)
         {
             this.Id = ExtractProductIdFromUrl(item_url);
+        }
+
+        public static bool IsSame(Item itm1, Item itm2)
+        {
+            if ((itm1.Sizes != null && itm2.Sizes == null)
+                || (itm1.Sizes == null && itm2.Sizes != null))
+                return false;
+            else if (itm1.Sizes != null && itm2.Sizes != null)
+            {
+                if (itm1.Sizes.Length != itm2.Sizes.Length)
+                    return false;
+
+                foreach (var s1 in itm1.Sizes)
+                {
+                    if (!Array.Exists(itm2.Sizes, s2 => s1 == s2))
+                        return false;
+                }
+            }
+
+            return itm1.Id == itm2.Id
+                && itm1.Title == itm2.Title
+                && itm1.ImageUrl == itm2.ImageUrl
+                && itm1.OriginalPrice == itm2.OriginalPrice
+                && itm1.CheckoutPrice == itm2.CheckoutPrice
+                && itm1.Color == itm2.Color;
         }
 
         public static string ExtractProductIdFromUrl(string url)
@@ -52,6 +78,11 @@ namespace SuperDry
                 if (product_detail_containers == null || product_detail_containers.Count < 1)
                     throw new Exception("cant find .product-detail");
                 product_detail_container = product_detail_containers[0];
+            }
+
+            // time
+            {
+                this.TimeUTC = DateTime.UtcNow;
             }
 
             // title

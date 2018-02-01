@@ -86,6 +86,29 @@ namespace SuperDry
         {
         }
 
+        private static Item ReadFromJson(JObject json)
+        {
+            List<string> sizes = new List<string>();
+            var sizes_json = json.Value<JArray>("sizes");
+            if (sizes_json != null)
+            {
+                foreach (JToken size_json in sizes_json)
+                    sizes.Add(size_json.Value<string>());
+            }
+
+            return new Item(json.Value<string>("url"))
+            {
+                Id = json.Value<string>("id"),
+                Title = json.Value<string>("name"),
+                ImageUrl = json.Value<string>("img"),
+                OriginalPrice = json.Value<float>("price"),
+                CheckoutPrice = json.Value<float>("checkout-price"),
+                Sizes = sizes.ToArray(),
+                Color = json.Value<string>("color"),
+                TimeUTC = new DateTime(1970, 1, 1) + TimeSpan.FromMilliseconds(json.Value<long>("time")),
+            };
+        }
+
         /// <summary>
         /// append to output json file
         /// </summary>
@@ -131,6 +154,10 @@ namespace SuperDry
             // color
             _OutputJson.WritePropertyName("color");
             _OutputJson.WriteValue(item.Color);
+
+            // time
+            _OutputJson.WritePropertyName("time");
+            _OutputJson.WriteValue((long)(item.TimeUTC - new DateTime(1970, 1, 1)).TotalMilliseconds);
 
             _OutputJson.WriteEndObject();
         }
@@ -234,7 +261,7 @@ namespace SuperDry
                             Headless = headless,
                             LoadImage = false,
                             LoadFont = false,
-//#if DEBUGxx
+                            //#if DEBUGxx
                             WildcardOfUrlToBlock = new string[]
                             {
                                 //"https://*.attraqt.com/*",
@@ -244,7 +271,7 @@ namespace SuperDry
                                 "https://*.peerius.com/*",
                                 "https://*.facebook.com/*",
                             }
-//#endif // DEBUG
+                            //#endif // DEBUG
                         }).Wait();
 
                         new_browser.SetWindowSize(new System.Drawing.Size(800, 900));
@@ -477,9 +504,9 @@ namespace SuperDry
         }
 
         private static void WriteWorkerStatus()
-        { 
+        {
             lock (_WorkerStatus)
-            { 
+            {
                 for (int i = 0; i < 5; i++)
                 {
                     try
@@ -522,25 +549,7 @@ namespace SuperDry
         {
             _StatusCallback = update_status;
 
-            _Items = new Dictionary<string, Item>();
-
-            // create Category worker from category urls and add to unprocessed list
-            _Scrapers = new List<Scrapable>();
-            foreach (var category_url in URL.CategoryUrls)
-            {
-                _Scrapers.Add(new Category(category_url));
-#if DEBUGxx
-                break;
-#endif // DEBUG
-            }
-
-            _WorkingScrapers = new List<Scrapable>();
-            _FinishedScrapers = new List<Scrapable>();
-
             _Browsers = new List<BrowserSession.BrowserSession>();
-            _WorkerThreads = new List<Thread>();
-            for (int i = 0; i < CONCURRENT_WORKER; i++)
-                _WorkerThreads.Add(new Thread(new ThreadStart(WorkerFunc)));
 
 #if kill
             _OutputStream = new StreamWriter(OUTPUT_FILENAME);
@@ -576,6 +585,48 @@ namespace SuperDry
             _StatusCallback = null;
         }
 
+        private void CompareWithBackupOutputJson()
+        {
+            Func<string, JArray> read_file = fn =>
+            {
+                if (!File.Exists(fn))
+                    return null;
+                string txt = File.ReadAllText(fn);
+                return JArray.Parse(txt);
+            };
+
+            var old_output = read_file(OUTPUT_FILENAME + ".backup");
+            if (old_output == null)
+                return; // nothing to do
+
+            var new_item_table = new Dictionary<string, Item>();
+            foreach (var key in _Items.Keys)
+                new_item_table.Add(key, _Items[key]);
+
+            foreach (var jo in old_output.Children<JObject>())
+            {
+                var old_item = ReadFromJson(jo);
+                string id = old_item.Id;
+                if (!new_item_table.ContainsKey(id))
+                    continue;
+
+                var new_item = new_item_table[id];
+                new_item_table.Remove(id);
+
+                if (Item.IsSame(new_item, old_item))
+                    new_item.TimeUTC = old_item.TimeUTC;  // reset to original time
+            }
+        }
+
+        private void BackupOutputJson()
+        {
+            var backup_path = Path.GetFileName(OUTPUT_FILENAME) + ".backup";
+            if (File.Exists(backup_path))
+                File.Delete(backup_path);
+            if (File.Exists(OUTPUT_FILENAME))
+                File.Move(OUTPUT_FILENAME, backup_path);
+        }
+
         /// <summary>
         /// save all finished items to items.json
         /// </summary>
@@ -583,6 +634,8 @@ namespace SuperDry
         {
             lock (_Items)
             {
+                CompareWithBackupOutputJson();
+
                 using (var sw = new StreamWriter(OUTPUT_FILENAME))
                 {
                     using (var writer = new JsonTextWriter(sw)
@@ -606,6 +659,27 @@ namespace SuperDry
         /// </summary>
         private void RunWorkerThreads()
         {
+            BackupOutputJson();
+
+            _WorkerThreads = new List<Thread>();
+            for (int i = 0; i < CONCURRENT_WORKER; i++)
+                _WorkerThreads.Add(new Thread(new ThreadStart(WorkerFunc)));
+
+            _Items = new Dictionary<string, Item>();
+
+            // create Category worker from category urls and add to unprocessed list
+            _Scrapers = new List<Scrapable>();
+            foreach (var category_url in URL.CategoryUrls)
+            {
+                _Scrapers.Add(new Category(category_url));
+#if DEBUGxx
+                break;
+#endif // DEBUG
+            }
+
+            _WorkingScrapers = new List<Scrapable>();
+            _FinishedScrapers = new List<Scrapable>();
+
             // start threads
             foreach (var thread in _WorkerThreads)
                 thread.Start();
@@ -614,6 +688,7 @@ namespace SuperDry
 
             // wait until all threads exited
             DateTime start_time = DateTime.Now;
+
             while (true)
             {
                 bool all_exited = true;
@@ -664,10 +739,21 @@ namespace SuperDry
         /// scrape
         /// </summary>
         /// <param name="update_status">callback function for working status</param>
-        public void Run(UpdateStatusDelegate update_status)
+        public void Run(bool periodic, UpdateStatusDelegate update_status)
         {
             Prepare(update_status);
-            RunWorkerThreads();
+
+            while (true)
+            {
+                RunWorkerThreads();
+
+                if (!periodic)
+                    break;
+
+                _StatusCallback("continue after 3 hours");
+                Task.Delay(TimeSpan.FromHours(3)).Wait();
+            }
+
             CleanUp();
         }
     }

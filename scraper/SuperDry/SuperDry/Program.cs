@@ -10,7 +10,7 @@ namespace SuperDry
     {
         static void Main(string[] args)
         {
-            new Engine().Run(status => Console.WriteLine(status));
+            new Engine().Run(Array.Exists(args, a => a == "/r"), status => Console.WriteLine(status));
         }
     }
 }
