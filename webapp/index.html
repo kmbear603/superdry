@@ -10,6 +10,7 @@
             var page = 0;
             var itemPerPage = 20;
             var sortingFunction = sortByName;
+            var currentCategory = null;
 
             $(function(){
                 init();
@@ -55,6 +56,8 @@
             }
             
             function doFilter(){
+                filterByCategory();
+                
                 const now = new Date().getTime();
                 const new_only = $("#new-item-checkbox").is(":checked");
                 items = items.filter(i=>!new_only || (i.hasOwnProperty("time") && now <= i["time"] + 24 * 60 * 60 * 1000));
@@ -233,15 +236,21 @@
             }
             
             function onSelectCategory(category){
-                if (category == null)
-                    items = allItems;
-                else
-                    items = allItems.filter(i => category == null || category == getCategoryFromItem(i));
+                currentCategory = category;
                 page = 0;
                 doFilter();
                 sortingFunction();
                 render();
                 $("#dropdownCategory").text(category == null ? "All" : category);
+            }
+            
+            function filterByCategory(){
+                const category = currentCategory;
+                
+                if (category == null)
+                    items = allItems;
+                else
+                    items = allItems.filter(i => category == null || category == getCategoryFromItem(i));
             }
 
             function getCategoryFromItem(item){
