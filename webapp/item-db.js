@@ -1,6 +1,9 @@
 var fs = require("fs");
 
-var ITEMS = JSON.parse(fs.readFileSync("items-final.json"));
+const FILE_NAME = "items-final.json";
+
+var loaded = false;
+var ITEMS = [];
 
 function isSameItem(item1, item2){
     return item1.id == item2.id
@@ -10,15 +13,29 @@ function isSameItem(item1, item2){
         && item1.img === item2.img;
 }
 
+function load(){
+    if (loaded)
+        return;
+    loaded = true;
+    ITEMS = JSON.parse(fs.readFileSync(FILE_NAME));
+}
+
+function save(){
+    fs.writeFile(FILE_NAME, JSON.stringify(ITEMS), 'utf8');
+}
+
 function list(){
+    load();
     return ITEMS.map(i => i.id);
 }
 
 function get(id){
+    load();
     return ITEMS.find(i => i.id == id);
 }
 
 function set(item){
+    load();
     const idx = ITEMS.findIndex(i => i.id == item.id);
     if (idx != -1){
         if (isSameItem(item, ITEMS[idx]))
@@ -27,6 +44,7 @@ function set(item){
     }
     item.time = new Date().getTime();
     ITEMS.push(item);
+
     return true;
 }
 
