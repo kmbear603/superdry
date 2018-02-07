@@ -23,7 +23,10 @@
                 sortingFunction = sortByName;
 
                 $.getJSON("items-final.json", function(data){
-                    allItems = items = data;
+                    allItems = items = data.filter(i => {
+                        return i.hasOwnProperty("name") && i["name"] != null
+                                && i.hasOwnProperty("checkout-price") && i["checkout-price"] > 0;
+                    });
                     
                     // list up all categories
                     var sorted_cats = [];

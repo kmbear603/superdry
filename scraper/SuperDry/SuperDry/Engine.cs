@@ -16,7 +16,7 @@ namespace SuperDry
         /// <summary>
         /// number of simultaneous working threads
         /// </summary>
-#if DEBUGxx
+#if DEBUG
         private const int CONCURRENT_WORKER = 1;
 #else // DEBUG
         private const int CONCURRENT_WORKER = 4;
@@ -33,6 +33,16 @@ namespace SuperDry
         /// output json file name
         /// </summary>
         private const string OUTPUT_FILENAME = "items.json";
+
+        /// <summary>
+        /// filename of config file
+        /// </summary>
+        private const string CONFIG_FILENAME = "config.json";
+
+        /// <summary>
+        /// configuration object
+        /// </summary>
+        private Configuration _Config = null;
 
         /// <summary>
         /// unprocessed scrapers
@@ -68,6 +78,16 @@ namespace SuperDry
         private List<BrowserSession.BrowserSession> _Browsers = null;
 
         /// <summary>
+        /// ID of uploaded items
+        /// </summary>
+        private HashSet<string> _UploadedItems = null;
+
+        /// <summary>
+        /// uploader, for uploading items to web server
+        /// </summary>
+        private Uploader _Uploader = null;
+
+        /// <summary>
         /// worker threads
         /// </summary>
         private List<Thread> _WorkerThreads = null;
@@ -88,78 +108,16 @@ namespace SuperDry
 
         private static Item ReadFromJson(JObject json)
         {
-            List<string> sizes = new List<string>();
-            var sizes_json = json.Value<JArray>("sizes");
-            if (sizes_json != null)
-            {
-                foreach (JToken size_json in sizes_json)
-                    sizes.Add(size_json.Value<string>());
-            }
-
-            return new Item(json.Value<string>("url"))
-            {
-                Id = json.Value<string>("id"),
-                Title = json.Value<string>("name"),
-                ImageUrl = json.Value<string>("img"),
-                OriginalPrice = json.Value<float>("price"),
-                CheckoutPrice = json.Value<float>("checkout-price"),
-                Sizes = sizes.ToArray(),
-                Color = json.Value<string>("color"),
-                TimeUTC = new DateTime(1970, 1, 1) + TimeSpan.FromMilliseconds(json.Value<long>("time")),
-            };
+            return Item.LoadFromJson(json);
         }
 
         /// <summary>
         /// append to output json file
         /// </summary>
         /// <param name="item"></param>
-        private void WriteToJson(JsonTextWriter _OutputJson, Item item)
+        private void WriteToJson(JsonTextWriter writer, Item item)
         {
-            _OutputJson.WriteStartObject();
-
-            // url
-            _OutputJson.WritePropertyName("url");
-            _OutputJson.WriteValue(item.Url);
-
-            // id
-            _OutputJson.WritePropertyName("id");
-            _OutputJson.WriteValue(item.Id);
-
-            // title
-            _OutputJson.WritePropertyName("name");
-            _OutputJson.WriteValue(item.Title);
-
-            // img
-            _OutputJson.WritePropertyName("img");
-            _OutputJson.WriteValue(item.ImageUrl);
-
-            // price
-            _OutputJson.WritePropertyName("price");
-            _OutputJson.WriteValue(item.OriginalPrice);
-
-            // checkout price
-            _OutputJson.WritePropertyName("checkout-price");
-            _OutputJson.WriteValue(item.CheckoutPrice);
-
-            // sizes
-            if (item.Sizes != null)
-            {
-                _OutputJson.WritePropertyName("sizes");
-                _OutputJson.WriteStartArray();
-                foreach (var s in item.Sizes)
-                    _OutputJson.WriteValue(s);
-                _OutputJson.WriteEndArray();
-            }
-
-            // color
-            _OutputJson.WritePropertyName("color");
-            _OutputJson.WriteValue(item.Color);
-
-            // time
-            _OutputJson.WritePropertyName("time");
-            _OutputJson.WriteValue((long)(item.TimeUTC - new DateTime(1970, 1, 1)).TotalMilliseconds);
-
-            _OutputJson.WriteEndObject();
+            item.SaveToJson(writer);
         }
 
         /// <summary>
@@ -549,6 +507,11 @@ namespace SuperDry
         {
             _StatusCallback = update_status;
 
+            _Config = new Configuration(CONFIG_FILENAME);
+            _Config.Load();
+
+            _Uploader = new Uploader(_Config.UploadBaseUrl);
+
             _Browsers = new List<BrowserSession.BrowserSession>();
 
 #if kill
@@ -582,6 +545,9 @@ namespace SuperDry
             _WorkingScrapers = null;
             _Scrapers = null;
             _Items = null;
+            _UploadedItems = null;
+            _Uploader = null;
+            _Config = null;
             _StatusCallback = null;
         }
 
@@ -659,11 +625,24 @@ namespace SuperDry
         /// </summary>
         private void RunWorkerThreads()
         {
+            Func<bool> flush = () =>
+            {
+                FlushToOutputJson();
+                _StatusCallback("flushed to " + OUTPUT_FILENAME);
+
+                int upload_count = UploadProcessedItems();
+                _StatusCallback("uploaded " + upload_count + " items");
+
+                return true;
+            };
+
             BackupOutputJson();
 
             _WorkerThreads = new List<Thread>();
             for (int i = 0; i < CONCURRENT_WORKER; i++)
                 _WorkerThreads.Add(new Thread(new ThreadStart(WorkerFunc)));
+
+            _UploadedItems = new HashSet<string>();
 
             _Items = new Dictionary<string, Item>();
 
@@ -722,17 +701,66 @@ namespace SuperDry
 
                 if (DateTime.Now >= last_flush + TimeSpan.FromMinutes(5))
                 {
-                    FlushToOutputJson();
-                    _StatusCallback("flushed to " + OUTPUT_FILENAME);
+                    flush();
+
                     last_flush = DateTime.Now;
                 }
 
                 Thread.Sleep(15 * 1000);
             }
 
+            flush();
+            DeleteRemovedItems();
+
             DateTime end_time = DateTime.Now;
             TimeSpan elapse = end_time - start_time;
             _StatusCallback("done! elapse=" + elapse.Hours.ToString() + "h" + elapse.Minutes.ToString() + "m" + elapse.Seconds.ToString() + "s");
+        }
+
+        private int DeleteRemovedItems()
+        {
+            int deleted_count = 0;
+            var items_on_server = _Uploader.List();
+
+            lock (_Items)
+            {
+                foreach (var id in items_on_server)
+                {
+                    if (_Items.ContainsKey(id))
+                        continue;
+                    _Uploader.Delete(id);
+                    deleted_count++;
+                }
+            }
+
+            return deleted_count;
+        }
+
+        private int UploadProcessedItems()
+        {
+            List<Item> upload_list = new List<Item>();
+
+            lock (_Items)
+            {
+                foreach (var item in _Items.Values)
+                {
+                    if (_UploadedItems.Contains(item.Id))
+                        continue;
+                    upload_list.Add(item);
+                }
+            }
+
+            foreach (var item in upload_list)
+            {
+                try
+                {
+                    _Uploader.Upload(item);
+                    _UploadedItems.Add(item.Id);
+                }
+                catch { }
+            }
+
+            return upload_list.Count;
         }
 
         /// <summary>

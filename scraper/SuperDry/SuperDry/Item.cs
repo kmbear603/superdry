@@ -5,6 +5,9 @@ using System.Text;
 using System.Threading.Tasks;
 using System.IO;
 
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
 namespace SuperDry
 {
     class Item : Scrapable
@@ -49,6 +52,93 @@ namespace SuperDry
                 && itm1.Color == itm2.Color;
         }
 
+        public static Item LoadFromJson(JObject json)
+        {
+            List<string> sizes = new List<string>();
+            var sizes_json = json.Value<JArray>("sizes");
+            if (sizes_json != null)
+            {
+                foreach (JToken size_json in sizes_json)
+                    sizes.Add(size_json.Value<string>());
+            }
+
+            return new Item(json.Value<string>("url"))
+            {
+                Id = json.Value<string>("id"),
+                Title = json.Value<string>("name"),
+                ImageUrl = json.Value<string>("img"),
+                OriginalPrice = json.Value<float>("price"),
+                CheckoutPrice = json.Value<float>("checkout-price"),
+                Sizes = sizes.ToArray(),
+                Color = json.Value<string>("color"),
+                TimeUTC = new DateTime(1970, 1, 1) + TimeSpan.FromMilliseconds(json.Value<long>("time")),
+            };
+        }
+
+        public string SaveAsJsonString()
+        {
+            var sb = new StringBuilder();
+
+            using (var sw = new StringWriter(sb))
+            {
+                using (var writer = new JsonTextWriter(sw))
+                {
+                    this.SaveToJson(writer);
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        public void SaveToJson(JsonTextWriter writer)
+        {
+            writer.WriteStartObject();
+
+            // url
+            writer.WritePropertyName("url");
+            writer.WriteValue(this.Url);
+
+            // id
+            writer.WritePropertyName("id");
+            writer.WriteValue(this.Id);
+
+            // title
+            writer.WritePropertyName("name");
+            writer.WriteValue(this.Title);
+
+            // img
+            writer.WritePropertyName("img");
+            writer.WriteValue(this.ImageUrl);
+
+            // price
+            writer.WritePropertyName("price");
+            writer.WriteValue(this.OriginalPrice);
+
+            // checkout price
+            writer.WritePropertyName("checkout-price");
+            writer.WriteValue(this.CheckoutPrice);
+
+            // sizes
+            if (this.Sizes != null)
+            {
+                writer.WritePropertyName("sizes");
+                writer.WriteStartArray();
+                foreach (var s in this.Sizes)
+                    writer.WriteValue(s);
+                writer.WriteEndArray();
+            }
+
+            // color
+            writer.WritePropertyName("color");
+            writer.WriteValue(this.Color);
+
+            // time
+            writer.WritePropertyName("time");
+            writer.WriteValue((long)(this.TimeUTC - new DateTime(1970, 1, 1)).TotalMilliseconds);
+
+            writer.WriteEndObject();
+        }
+
         public static string ExtractProductIdFromUrl(string url)
         {
             // eg. https://www.superdry.com/us/womens/sale-jackets/details/63882/microfibre-windbomber-jacket-black
@@ -74,10 +164,9 @@ namespace SuperDry
             // find the detail element
             BrowserSession.WebElement.WebElement product_detail_container;
             {
-                var product_detail_containers = browser.DefaultFrame.FindElementByClassName("product-detail");
-                if (product_detail_containers == null || product_detail_containers.Count < 1)
+                product_detail_container = browser.DefaultFrame.FindElementById("product" + ExtractProductIdFromUrl(this.Url));
+                if (product_detail_container == null)
                     throw new Exception("cant find .product-detail");
-                product_detail_container = product_detail_containers[0];
             }
 
             // time
@@ -95,10 +184,10 @@ namespace SuperDry
 
             // image
             {
-                var image_container = browser.DefaultFrame.FindElementById<BrowserSession.WebElement.Image>("main-image");
-                if (image_container == null)
-                    throw new Exception("cant find #image_container");
-                this.ImageUrl = image_container.Src;
+                var image_containers = browser.DefaultFrame.FindElementByClassName<BrowserSession.WebElement.Image>("main_image");
+                if (image_containers == null || image_containers.Count < 1)
+                    throw new Exception("cant find .main_image");
+                this.ImageUrl = image_containers[0].Src;
             }
 
             // original price
@@ -112,20 +201,21 @@ namespace SuperDry
 
             // color
             {
-                var color_container = product_detail_container.FindElementById("product-colour");
-                if (color_container == null)
-                    throw new Exception("cant find .product-detail #product-colour");
-                this.Color = color_container.Text.Trim();
+                var color_containers = product_detail_container.FindElementByClassName("product_color");
+                if (color_containers == null || color_containers.Count < 1)
+                    throw new Exception("cant find .product-detail .product_colour");
+                this.Color = color_containers[0].Text.Trim();
             }
 
             // sizes
             {
                 List<string> options = new List<string>();
 
-                var available_sizes_container = product_detail_container.FindElementById("available-sizes");
-                if (available_sizes_container != null)
+                var available_sizes_containers = product_detail_container.FindElementByClassName("size-container");
+                if (available_sizes_containers != null && available_sizes_containers.Count > 0)
                 {
-                    var select_containers = product_detail_container.FindElementByTagName("select");
+                    var available_sizes_container = available_sizes_containers[0];
+                    var select_containers = available_sizes_container.FindElementByTagName<BrowserSession.WebElement.Select>("select");
                     if (select_containers != null && select_containers.Count == 1)
                     {
                         var option_containers = available_sizes_container.FindElementByTagName<BrowserSession.WebElement.Option>("option");
@@ -139,7 +229,8 @@ namespace SuperDry
                                 options.Add(option_container.InnerHTML.Trim().Replace("\"", "\'"));
 
                                 // select this size for later stage of add-to-bag
-                                browser.ExecuteJavascriptAsync("document.getElementById('product_id').value='" + option_container.Value + "';").Wait();
+                                //browser.ExecuteJavascriptAsync("document.getElementsByName('size-dropdown')[0].value='" + option_container.Value + "';").Wait();
+                                select_containers[0].SelectByValue(option_container.Value);
                             }
                         }
                     }
@@ -148,9 +239,11 @@ namespace SuperDry
                 this.Sizes = options.ToArray();
             }
 
+            Task.Delay(1000).Wait();    // sleep one second to let it complete loading the bag
+
             // add to bag
             {
-                var form = product_detail_container.FindElementById<BrowserSession.WebElement.Form>("add-to-bag");
+                var form = product_detail_container.FindElementById<BrowserSession.WebElement.Form>("add-to-bag-mob");
                 if (form == null)
                 {
                     sold_out = true;
@@ -164,7 +257,11 @@ namespace SuperDry
 
                 var original_count = cart_count_container.Text.Trim();
 
-                form.SubmitAsync().Wait();
+                var add_to_bag_buttons = product_detail_container.FindElementByClassName<BrowserSession.WebElement.Button>("add-to-bag-button");
+                if (add_to_bag_buttons == null || add_to_bag_buttons.Count < 1)
+                    throw new Exception("cant find .add-to-bag-button");
+
+                add_to_bag_buttons[0].ClickWithoutScrollAsync().Wait();
 
                 // wait until cart is updated
                 int failed = 0;

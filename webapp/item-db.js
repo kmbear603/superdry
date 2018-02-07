@@ -6,11 +6,11 @@ var loaded = false;
 var ITEMS = [];
 
 function isSameItem(item1, item2){
-    return item1.id == item2.id
-        && item1.color == item2.color
-        && item1.price == item2.price
-        && item1.checkoutPrice == item2.checkoutPrice
-        && item1.img === item2.img;
+    return item1["id"] === item2["id"]
+            && item1["color"] === item2["color"]
+            && item1["price"] === item2["price"]
+            && item1["checkout-price"] === item2["checkout-price"]
+            && item1["img"] === item2["img"];
 }
 
 function load(){
@@ -44,6 +44,22 @@ function set(item){
     }
     item.time = new Date().getTime();
     ITEMS.push(item);
+    
+    save();
+
+    return true;
+}
+
+function remove(id){
+    load();
+
+    const idx = ITEMS.findIndex(i => i.id == id);
+    if (idx == -1)
+        return true;
+
+    ITEMS.splice(idx, 1);
+    
+    save();
 
     return true;
 }
@@ -51,5 +67,6 @@ function set(item){
 module.exports = {
     list: list,
     get: get,
-    set: set
+    set: set,
+    remove: remove
 };

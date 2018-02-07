@@ -37,6 +37,7 @@ namespace SuperDry
             {
                 return new string[]
                 {
+#if !DEBUG
                     URL_PREFIX + US + MEN + "/sale-jackets",
                     URL_PREFIX + US + MEN + "/sale-hoodies",
                     URL_PREFIX + US + MEN + "/sale-knitwear",
@@ -60,8 +61,11 @@ namespace SuperDry
                     URL_PREFIX + US + WOMEN + "/sale-skirts-a-shorts",
                     URL_PREFIX + US + WOMEN + "/sale-trousers",
                     URL_PREFIX + US + WOMEN + "/sale-accessories",
+#endif // !DEBUG
                     URL_PREFIX + US + WOMEN + "/sale-shirts",
+#if !DEBUG
                     URL_PREFIX + US + WOMEN + "/sale-footwear",
+#endif // !DEBUG
                 };
             }
         }

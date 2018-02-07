@@ -27,4 +27,12 @@ app.post("/item/:id", (req, res)=>{
         res.status(200).send("OK");
 });
 
+app.delete("/item/:id", (req, res)=>{
+    const ok = itemDB.remove(req.params.id);
+    if (!ok)
+        res.status(500).send("failed");
+    else
+        res.status(200).send("OK");
+});
+
 app.listen(8080);
